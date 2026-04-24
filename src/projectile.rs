@@ -149,6 +149,7 @@ fn bot_shoot(
     >,
     all_ships: Query<(&Transform, &Ship), Without<Respawning>>,
 ) {
+    let now = time.elapsed_seconds();
     for (tf, facing, ship, difficulty, mut cd, respawning) in &mut shooters {
         cd.0.tick(time.delta());
         if *mode != GameMode::Shooter {
@@ -163,12 +164,14 @@ fn bot_shoot(
 
         let pos = tf.translation.truncate();
         let forward = Vec2::new(facing.0.cos(), facing.0.sin());
-        let fire_range: f32 = match *difficulty {
-            BotDifficulty::Easy => 220.0,
-            BotDifficulty::Medium => 340.0,
-            BotDifficulty::Hard => 460.0,
+
+        // Difficulty curves — Easy shoots slowly with big aim jitter; Hard is
+        // the previous sniper.
+        let (fire_range, cooldown_secs, jitter_rad): (f32, f32, f32) = match *difficulty {
+            BotDifficulty::Easy => (180.0, 1.0, 0.28),
+            BotDifficulty::Medium => (320.0, 0.55, 0.10),
+            BotDifficulty::Hard => (450.0, 0.35, 0.0),
         };
-        // Tight aim cone so shots aren't wildly inaccurate.
         const CONE_COS: f32 = 0.94;
 
         let mut should_fire = false;
@@ -189,9 +192,13 @@ fn bot_shoot(
         }
 
         if should_fire {
+            // Deterministic pseudo-random jitter — avoids adding a rand dep.
+            let seed = (now * 19.37 + tf.translation.x * 0.13 + tf.translation.y * 0.17).sin();
+            let aim_angle = facing.0 + seed * jitter_rad;
+            let aim_dir = Vec2::new(aim_angle.cos(), aim_angle.sin());
             let origin = pos + forward * (SHIP_RADIUS + PROJECTILE_RADIUS + 2.0);
-            spawn_projectile(&mut commands, &mut meshes, &mut materials, origin, forward, ship.team);
-            cd.0.reset();
+            spawn_projectile(&mut commands, &mut meshes, &mut materials, origin, aim_dir, ship.team);
+            cd.0 = Timer::from_seconds(cooldown_secs, TimerMode::Once);
         }
     }
 }

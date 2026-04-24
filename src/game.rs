@@ -25,8 +25,17 @@ pub enum AppState {
 pub struct Paused(pub bool);
 
 /// Endless mode has no score target — play as long as you want.
+/// Derived from `ScoreTarget` at match start; used by the HUD to expose
+/// bot +/- controls and all per-bot rows.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub struct EndlessMode(pub bool);
+
+/// Menu-selected winning score. `None` = unlimited (freeplay).
+#[derive(Resource, Clone, Copy)]
+pub struct ScoreTarget(pub Option<u32>);
+impl Default for ScoreTarget {
+    fn default() -> Self { Self(Some(5)) }
+}
 
 /// Team bot counts. In Story mode these are reset to 1/2. In Endless they
 /// can be bumped by HUD +/- buttons and persist across restarts.
@@ -157,6 +166,7 @@ impl Plugin for GamePlugin {
             .init_resource::<SelectedDifficulty>()
             .init_resource::<Paused>()
             .init_resource::<EndlessMode>()
+            .init_resource::<ScoreTarget>()
             .init_resource::<BotCounts>()
             .insert_resource(load_progress())
             .add_systems(Startup, (setup_camera, on_startup))
@@ -227,12 +237,22 @@ fn enter_playing(
     mut match_state: ResMut<MatchState>,
     mut score: ResMut<Score>,
     mut pause: ResMut<Paused>,
-    endless: Res<EndlessMode>,
+    target: Res<ScoreTarget>,
+    mut endless: ResMut<EndlessMode>,
     mut counts: ResMut<BotCounts>,
 ) {
     *score = Score::default();
     *match_state = MatchState::default();
-    match_state.target_score = if endless.0 { u32::MAX } else { 5 };
+    match target.0 {
+        Some(n) => {
+            match_state.target_score = n;
+            endless.0 = false;
+        }
+        None => {
+            match_state.target_score = u32::MAX;
+            endless.0 = true;
+        }
+    }
     pause.0 = false;
     if !endless.0 {
         *counts = BotCounts::default();
@@ -426,12 +446,22 @@ struct MenuModeToggle;
 struct MenuModeText;
 
 #[derive(Component)]
-struct MenuEndlessStart { difficulty: BotDifficulty }
+struct MenuScoreDecrease;
+
+#[derive(Component)]
+struct MenuScoreIncrease;
+
+#[derive(Component)]
+struct MenuScoreUnlimited;
+
+#[derive(Component)]
+struct MenuScoreText;
 
 fn spawn_menu(
     mut commands: Commands,
     progress: Res<Progress>,
     mode: Res<crate::projectile::GameMode>,
+    target: Res<ScoreTarget>,
 ) {
     commands
         .spawn((
@@ -487,59 +517,104 @@ fn spawn_menu(
                 ));
             });
 
-            // Endless row
+            // Target-score picker. Selecting Unlimited enables freeplay
+            // behavior (no win, bot +/- controls visible in-game).
             root.spawn(NodeBundle {
                 style: Style {
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
-                    column_gap: Val::Px(10.0),
+                    column_gap: Val::Px(8.0),
                     padding: UiRect::all(Val::Px(6.0)),
-                    min_width: Val::Px(520.0),
                     ..default()
                 },
-                background_color: Color::srgba(0.12, 0.08, 0.22, 0.85).into(),
+                background_color: Color::srgba(0.12, 0.12, 0.22, 0.8).into(),
                 border_radius: BorderRadius::all(Val::Px(6.0)),
                 ..default()
             })
             .with_children(|row| {
+                row.spawn((
+                    ButtonBundle {
+                        style: Style {
+                            width: Val::Px(32.0),
+                            height: Val::Px(32.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        background_color: Color::srgba(0.25, 0.25, 0.45, 0.95).into(),
+                        border_radius: BorderRadius::all(Val::Px(5.0)),
+                        focus_policy: FocusPolicy::Block,
+                        ..default()
+                    },
+                    MenuScoreDecrease,
+                ))
+                .with_children(|b| {
+                    b.spawn(TextBundle::from_section(
+                        "-",
+                        TextStyle { font_size: 18.0, color: Color::WHITE, ..default() },
+                    ));
+                });
                 row.spawn(NodeBundle {
-                    style: Style { width: Val::Px(330.0), ..default() },
+                    style: Style {
+                        width: Val::Px(180.0),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
                     ..default()
                 })
                 .with_children(|c| {
-                    c.spawn(TextBundle::from_section(
-                        "ENDLESS — start open field, adjust bots in-game",
-                        TextStyle { font_size: 16.0, color: Color::WHITE, ..default() },
+                    c.spawn((
+                        TextBundle::from_section(
+                            format_score(target.0),
+                            TextStyle { font_size: 16.0, color: Color::WHITE, ..default() },
+                        ),
+                        MenuScoreText,
                     ));
                 });
-                for (lbl, diff) in [
-                    ("E", BotDifficulty::Easy),
-                    ("M", BotDifficulty::Medium),
-                    ("H", BotDifficulty::Hard),
-                ] {
-                    row.spawn((
-                        ButtonBundle {
-                            style: Style {
-                                width: Val::Px(44.0),
-                                height: Val::Px(32.0),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                            background_color: Color::srgba(0.3, 0.2, 0.5, 0.95).into(),
-                            border_radius: BorderRadius::all(Val::Px(5.0)),
-                            focus_policy: FocusPolicy::Block,
+                row.spawn((
+                    ButtonBundle {
+                        style: Style {
+                            width: Val::Px(32.0),
+                            height: Val::Px(32.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
                             ..default()
                         },
-                        MenuEndlessStart { difficulty: diff },
-                    ))
-                    .with_children(|b| {
-                        b.spawn(TextBundle::from_section(
-                            lbl,
-                            TextStyle { font_size: 16.0, color: Color::WHITE, ..default() },
-                        ));
-                    });
-                }
+                        background_color: Color::srgba(0.25, 0.25, 0.45, 0.95).into(),
+                        border_radius: BorderRadius::all(Val::Px(5.0)),
+                        focus_policy: FocusPolicy::Block,
+                        ..default()
+                    },
+                    MenuScoreIncrease,
+                ))
+                .with_children(|b| {
+                    b.spawn(TextBundle::from_section(
+                        "+",
+                        TextStyle { font_size: 18.0, color: Color::WHITE, ..default() },
+                    ));
+                });
+                row.spawn((
+                    ButtonBundle {
+                        style: Style {
+                            width: Val::Px(120.0),
+                            height: Val::Px(32.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        background_color: Color::srgba(0.3, 0.2, 0.5, 0.95).into(),
+                        border_radius: BorderRadius::all(Val::Px(5.0)),
+                        focus_policy: FocusPolicy::Block,
+                        ..default()
+                    },
+                    MenuScoreUnlimited,
+                ))
+                .with_children(|b| {
+                    b.spawn(TextBundle::from_section(
+                        "UNLIMITED",
+                        TextStyle { font_size: 14.0, color: Color::WHITE, ..default() },
+                    ));
+                });
             });
 
             root.spawn(TextBundle::from_section(
@@ -622,15 +697,25 @@ fn spawn_menu(
         });
 }
 
+pub fn format_score(target: Option<u32>) -> String {
+    match target {
+        Some(n) => format!("POINTS TO WIN: {}", n),
+        None => "POINTS TO WIN: UNLIMITED".into(),
+    }
+}
+
 fn menu_button_clicks(
     levels_q: Query<(&Interaction, &MenuLevelStart), Changed<Interaction>>,
-    endless_q: Query<(&Interaction, &MenuEndlessStart), Changed<Interaction>>,
     mode_q: Query<&Interaction, (Changed<Interaction>, With<MenuModeToggle>)>,
+    score_dec_q: Query<&Interaction, (Changed<Interaction>, With<MenuScoreDecrease>)>,
+    score_inc_q: Query<&Interaction, (Changed<Interaction>, With<MenuScoreIncrease>)>,
+    score_unl_q: Query<&Interaction, (Changed<Interaction>, With<MenuScoreUnlimited>)>,
     mut level: ResMut<SelectedLevel>,
     mut diff: ResMut<SelectedDifficulty>,
-    mut endless: ResMut<EndlessMode>,
+    mut target: ResMut<ScoreTarget>,
     mut mode: ResMut<crate::projectile::GameMode>,
-    mut mode_text: Query<&mut Text, With<MenuModeText>>,
+    mut mode_text: Query<&mut Text, (With<MenuModeText>, Without<MenuScoreText>)>,
+    mut score_text: Query<&mut Text, With<MenuScoreText>>,
     mut next: ResMut<NextState<AppState>>,
 ) {
     for i in &mode_q {
@@ -641,19 +726,39 @@ fn menu_button_clicks(
             }
         }
     }
+    let mut score_changed = false;
+    for i in &score_dec_q {
+        if *i == Interaction::Pressed {
+            let current = target.0.unwrap_or(5);
+            target.0 = Some(current.saturating_sub(1).max(1));
+            score_changed = true;
+        }
+    }
+    for i in &score_inc_q {
+        if *i == Interaction::Pressed {
+            let current = target.0.unwrap_or(5);
+            target.0 = Some((current + 1).min(15));
+            score_changed = true;
+        }
+    }
+    for i in &score_unl_q {
+        if *i == Interaction::Pressed {
+            target.0 = match target.0 {
+                Some(_) => None,
+                None => Some(5),
+            };
+            score_changed = true;
+        }
+    }
+    if score_changed {
+        for mut t in &mut score_text {
+            t.sections[0].value = format_score(target.0);
+        }
+    }
     for (i, start) in &levels_q {
         if *i == Interaction::Pressed {
             level.0 = start.level;
             diff.0 = start.difficulty;
-            endless.0 = false;
-            next.set(AppState::Playing);
-        }
-    }
-    for (i, start) in &endless_q {
-        if *i == Interaction::Pressed {
-            level.0 = 0;
-            diff.0 = start.difficulty;
-            endless.0 = true;
             next.set(AppState::Playing);
         }
     }
