@@ -486,7 +486,7 @@ fn spawn_menu(
         ))
         .with_children(|root| {
             root.spawn(TextBundle::from_section(
-                "CTF DARTS",
+                "SPACE BOOSTERS",
                 TextStyle { font_size: 48.0, color: Color::srgb(1.0, 1.0, 0.4), ..default() },
             ));
 

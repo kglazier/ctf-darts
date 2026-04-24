@@ -1,10 +1,10 @@
 [package]
-name = "ctf"
+name = "space_boosters"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "ctf"
+name = "space_boosters"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
@@ -13,7 +13,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [package.metadata.android]
-package = "com.kglazier.ctf"
+package = "com.kglazier.spaceboosters"
 build_targets = ["aarch64-linux-android"]
 
 [package.metadata.android.sdk]
@@ -21,7 +21,7 @@ min_sdk_version = 24
 target_sdk_version = 34
 
 [package.metadata.android.application]
-label = "CTF Darts"
+label = "Space Boosters"
 
 [[package.metadata.android.uses_feature]]
 name = "android.hardware.touchscreen"

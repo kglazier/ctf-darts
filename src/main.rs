@@ -1,3 +1,3 @@
 fn main() {
-    ctf::main();
+    space_boosters::main();
 }

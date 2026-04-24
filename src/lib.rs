@@ -34,7 +34,7 @@ pub fn main() {
             DefaultPlugins
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "CTF Darts".into(),
+                        title: "Space Boosters".into(),
                         resizable: true,
                         ..default()
                     }),
