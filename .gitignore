@@ -1,0 +1,25 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Bevy/native
+*.pdb
+*.exp
+*.lib.bk
+
+# Editor
+/.vscode/
+/.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# App data
+/progress.json
+
+# Claude local project state
+/.claude/
