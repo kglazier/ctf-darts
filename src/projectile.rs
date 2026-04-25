@@ -170,7 +170,9 @@ fn bot_shoot(
         let (fire_range, cooldown_secs, jitter_rad): (f32, f32, f32) = match *difficulty {
             BotDifficulty::Easy => (180.0, 1.0, 0.28),
             BotDifficulty::Medium => (320.0, 0.55, 0.10),
-            BotDifficulty::Hard => (450.0, 0.35, 0.0),
+            // Hard is one notch above Medium — slightly longer range and
+            // faster cooldown, but still meaningfully off-perfect aim.
+            BotDifficulty::Hard => (380.0, 0.45, 0.06),
         };
         const CONE_COS: f32 = 0.94;
 

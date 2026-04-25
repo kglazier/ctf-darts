@@ -241,7 +241,7 @@ fn sync_bot_stamina_regen(
         s.regen = match d {
             BotDifficulty::Easy => 0.10,
             BotDifficulty::Medium => 0.14,
-            BotDifficulty::Hard => 0.38,
+            BotDifficulty::Hard => 0.22,
         };
     }
 }
@@ -581,15 +581,17 @@ fn drive_bots(
         // boosts; the button fires projectiles instead.
         let want_boost = if *mode != crate::projectile::GameMode::Classic {
             false
-        } else if on_path_kill && *difficulty == BotDifficulty::Hard && stamina.current > 0.25 {
+        } else if on_path_kill && *difficulty == BotDifficulty::Hard && stamina.current > 0.45 {
             true
         } else {
             match (*difficulty, urgency) {
                 (BotDifficulty::Easy, _) => false,
                 (BotDifficulty::Medium, Urgency::High) => stamina.current > 0.25,
                 (BotDifficulty::Medium, _) => false,
-                (BotDifficulty::Hard, Urgency::High) => stamina.current > 0.1,
-                (BotDifficulty::Hard, Urgency::Med) => stamina.current > 0.55,
+                // Hard is one notch above Medium — still suffers boost
+                // inefficiency; only boosts confidently when stamina is fresh.
+                (BotDifficulty::Hard, Urgency::High) => stamina.current > 0.2,
+                (BotDifficulty::Hard, Urgency::Med) => stamina.current > 0.7,
                 (BotDifficulty::Hard, Urgency::Low) => false,
             }
         };
@@ -641,7 +643,7 @@ fn drive_bots(
             match *difficulty {
                 BotDifficulty::Easy => (140.0, 0.3),
                 BotDifficulty::Medium => (190.0, 0.6),
-                BotDifficulty::Hard => (250.0, 1.0),
+                BotDifficulty::Hard => (215.0, 0.8),
             }
         } else {
             (210.0, 1.0)
@@ -693,7 +695,7 @@ fn drive_bots(
         let steer_gain: f32 = match *difficulty {
             BotDifficulty::Easy => 2.0,
             BotDifficulty::Medium => 2.8,
-            BotDifficulty::Hard => 5.0,
+            BotDifficulty::Hard => 3.5,
         };
         let steer = (desired - vel.0) * steer_gain * dt;
         vel.0 += steer;
