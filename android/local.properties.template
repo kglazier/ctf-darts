@@ -1,0 +1,14 @@
+# Copy this file to local.properties and fill in your values.
+# local.properties is gitignored — keystore secrets stay off the repo.
+
+# Path to your Android SDK (Android Studio → Settings → Appearance & Behavior → System Settings → Android SDK)
+sdk.dir=C\:\\Users\\kglazier\\AppData\\Local\\Android\\Sdk
+
+# Optional explicit NDK path. If unset, Gradle will use the SDK's installed NDK.
+# ndk.dir=C\:\\Users\\kglazier\\AppData\\Local\\Android\\Sdk\\ndk\\27.0.12077973
+
+# Release signing config — point at the same keystore you use for Tower Native if you like.
+STORE_FILE=C\:\\path\\to\\your\\keystore.jks
+STORE_PASSWORD=your_store_password
+KEY_ALIAS=spaceboosters
+KEY_PASSWORD=your_key_password
