@@ -29,6 +29,7 @@ Thumbs.db
 /android/.idea/
 /android/build/
 /android/app/build/
+/android/app/release/
 /android/local.properties
 /android/captures/
 /android/.cxx/
