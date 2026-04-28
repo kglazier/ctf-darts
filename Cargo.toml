@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "android_net_bind"]
+
 [package]
 name = "space_boosters"
 version = "0.1.0"
@@ -11,6 +14,16 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 bevy = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+android_net_bind = { path = "android_net_bind" }
+# Multiplayer (online): WebRTC P2P via matchbox + bincode for compact wire
+# format. matchbox 0.10 targets bevy 0.14. The WebRTC crate it pulls in has
+# native build requirements on Android — see android/build notes if cargo-ndk
+# fails after this change. Solo play does not exercise this code.
+bevy_matchbox = "0.10"
+bincode = "1.3"
+# Used by net_smoke_test.rs for the Phase 1 NDK-bind validation. Only
+# net + a tiny current-thread runtime needed.
+tokio = { version = "1", features = ["net", "rt", "macros", "io-util"] }
 
 [package.metadata.android]
 package = "com.kglazier.spaceboosters"

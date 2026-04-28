@@ -5,7 +5,11 @@ use crate::movement::{MaxSpeed, Velocity};
 use crate::player::{PlayerControlled, Stamina, Thrusting};
 use crate::GameSet;
 
-#[derive(Resource, Default)]
+/// Per-ship input. The local player has one auto-populated by joystick &
+/// keyboard. In online play, remote players will carry one fed by their
+/// peer's `ClientInput` packets, so the same gameplay systems can read
+/// inputs uniformly regardless of source.
+#[derive(Component, Default, Clone, Copy)]
 pub struct PlayerInput {
     pub move_dir: Vec2,
     pub sprint: bool,
@@ -55,8 +59,7 @@ pub const INSET: f32 = 40.0;
 pub struct InputPlugin;
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PlayerInput>()
-            .init_resource::<JoystickState>()
+        app.init_resource::<JoystickState>()
             .init_resource::<JoystickLayout>()
             .add_systems(
                 Update,
@@ -75,8 +78,10 @@ impl Plugin for InputPlugin {
     }
 }
 
-fn reset_input(mut input: ResMut<PlayerInput>) {
-    *input = PlayerInput::default();
+fn reset_input(mut q: Query<&mut PlayerInput, With<PlayerControlled>>) {
+    for mut input in &mut q {
+        *input = PlayerInput::default();
+    }
 }
 
 fn update_layout(mut layout: ResMut<JoystickLayout>, windows: Query<&Window>) {
@@ -272,7 +277,11 @@ fn update_joystick_visuals(
     }
 }
 
-fn read_keyboard(keys: Res<ButtonInput<KeyCode>>, mut input: ResMut<PlayerInput>) {
+fn read_keyboard(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut q: Query<&mut PlayerInput, With<PlayerControlled>>,
+) {
+    let Ok(mut input) = q.get_single_mut() else { return };
     let mut mv = Vec2::ZERO;
     if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) { mv.y += 1.0; }
     if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) { mv.y -= 1.0; }
@@ -286,7 +295,11 @@ fn read_keyboard(keys: Res<ButtonInput<KeyCode>>, mut input: ResMut<PlayerInput>
     }
 }
 
-fn sticks_to_input(state: Res<JoystickState>, mut input: ResMut<PlayerInput>) {
+pub fn sticks_to_input(
+    state: Res<JoystickState>,
+    mut q: Query<&mut PlayerInput, With<PlayerControlled>>,
+) {
+    let Ok(mut input) = q.get_single_mut() else { return };
     if state.left.offset.length_squared() > 0.04 {
         input.move_dir = state.left.offset;
     }
@@ -295,26 +308,33 @@ fn sticks_to_input(state: Res<JoystickState>, mut input: ResMut<PlayerInput>) {
     }
 }
 
-fn apply_input_to_player(
-    input: Res<PlayerInput>,
+pub fn apply_input_to_player(
     mode: Res<crate::projectile::GameMode>,
     time: Res<Time>,
     mut q: Query<
         (
+            &PlayerInput,
             &mut Velocity,
             &MaxSpeed,
             &mut Thrusting,
             &mut Stamina,
             Option<&crate::flag::CarryingFlag>,
         ),
-        With<PlayerControlled>,
+        // All human-driven ships: the local PlayerControlled AND online
+        // RemoteHumans (whose PlayerInput is fed by network packets via
+        // host_apply_remote_input on the host side). Bots are excluded
+        // since they have BotDifficulty and are driven by drive_bots.
+        Without<crate::bot::BotDifficulty>,
     >,
 ) {
-    let Ok((mut vel, max_speed, mut thrusting, mut stamina, carrying)) = q.get_single_mut() else {
-        return;
-    };
+    for (input, mut vel, max_speed, mut thrusting, mut stamina, carrying) in &mut q {
 
-    const ACCEL: f32 = 1400.0;
+    // ACCEL must be > DRAG * (max_speed * SPRINT_MUL) or drag-equilibrium
+    // pulls the player below the boost cap, leaving bots (which only have
+    // a hard cap, no drag) faster than the boosted player. With DRAG=3 and
+    // a 320*1.8=576 boosted cap, equilibrium needs ACCEL > 1728. Old value
+    // (1400) gave equilibrium ~466 and a permanently slower player.
+    const ACCEL: f32 = 2000.0;
     const DRAG: f32 = 3.0;
     // Boost is weaker while carrying — carriers are the vulnerable party.
     const SPRINT_MUL: f32 = 1.8;
@@ -340,5 +360,6 @@ fn apply_input_to_player(
     vel.0 *= (1.0 - DRAG * dt).max(0.0);
     if vel.0.length() > current_max {
         vel.0 = vel.0.normalize() * current_max;
+    }
     }
 }

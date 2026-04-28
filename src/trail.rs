@@ -1,9 +1,7 @@
 use bevy::prelude::*;
 use bevy::sprite::{MaterialMesh2dBundle, Mesh2dHandle};
 
-use crate::flag::CarryingFlag;
 use crate::player::{Facing, Ship, Thrusting};
-use crate::tag::Respawning;
 use crate::GameSet;
 
 #[derive(Component)]
@@ -18,7 +16,6 @@ impl Plugin for TrailPlugin {
         app.add_systems(
             Update,
             (
-                spawn_carrier_trail,
                 spawn_thrust_flame,
                 pulse_thrust_ship,
                 fade_trail,
@@ -28,40 +25,17 @@ impl Plugin for TrailPlugin {
     }
 }
 
-fn spawn_carrier_trail(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    carriers: Query<(&Transform, &Ship), (With<CarryingFlag>, Without<Respawning>)>,
-    mut acc: Local<f32>,
-) {
-    *acc += time.delta_seconds();
-    if *acc < 0.05 {
-        return;
-    }
-    *acc = 0.0;
-
-    for (tf, ship) in &carriers {
-        commands.spawn((
-            MaterialMesh2dBundle {
-                mesh: Mesh2dHandle(meshes.add(Circle::new(5.0))),
-                material: materials.add(ship.team.color()),
-                transform: Transform::from_translation(tf.translation.truncate().extend(-0.5)),
-                ..default()
-            },
-            TrailParticle { life: 1.5, max_life: 1.5 },
-            crate::game::PlayingEntity,
-        ));
-    }
-}
-
+/// Boost flame trail. Only spawns while the ship is thrusting AND
+/// visible (client-side: visibility is replicated from snapshot's
+/// respawning_secs, so dead ships don't trail). The Respawning
+/// component itself isn't replicated to clients, so checking Visibility
+/// is the cross-peer-correct way to gate trails on alive ships.
 fn spawn_thrust_flame(
     mut commands: Commands,
     time: Res<Time>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    ships: Query<(&Transform, &Thrusting, &Facing), Without<Respawning>>,
+    ships: Query<(&Transform, &Thrusting, &Facing, &Visibility, &Ship)>,
     mut acc: Local<f32>,
 ) {
     *acc += time.delta_seconds();
@@ -70,8 +44,11 @@ fn spawn_thrust_flame(
     }
     *acc = 0.0;
 
-    for (tf, thrust, facing) in &ships {
+    for (tf, thrust, facing, vis, _ship) in &ships {
         if !thrust.0 {
+            continue;
+        }
+        if matches!(vis, Visibility::Hidden) {
             continue;
         }
         let forward = Vec2::new(facing.0.cos(), facing.0.sin());

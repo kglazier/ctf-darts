@@ -9,9 +9,15 @@ android {
     defaultConfig {
         applicationId "com.kglazier.spaceboosters"
         minSdk 24
+        // targetSdk 35 — back on Android 15 semantics. Multiplayer used to
+        // break here because bindProcessToNetwork returns false; we work
+        // around that with per-socket binding via android_net_bind (NDK
+        // android_setsocknetwork). The Phase 1 smoke-test in
+        // src/net_smoke_test.rs validates that the bind path works on
+        // device before we commit to the matchbox fork.
         targetSdk 35
-        versionCode 2
-        versionName "0.1.1"
+        versionCode 34
+        versionName "0.4.8"
 
         ndk {
             abiFilters 'arm64-v8a'
@@ -55,3 +61,63 @@ android {
 
 dependencies {
 }
+
+// ----------------------------------------------------------------------------
+// libc++_shared.so auto-copy
+//
+// Bevy (oboe audio) and bevy_matchbox (webrtc-rs) link against
+// libc++_shared.so but the NDK doesn't bundle it into the APK
+// automatically. Without it the app crashes on launch with "couldn't find
+// libc++_shared.so". This task copies the right per-ABI copy out of the
+// NDK sysroot into jniLibs/<abi>/ before the build links the APK.
+// ----------------------------------------------------------------------------
+
+def hostTag = {
+    def os = org.gradle.internal.os.OperatingSystem.current()
+    if (os.isWindows()) return 'windows-x86_64'
+    if (os.isMacOsX())  return 'darwin-x86_64'
+    return 'linux-x86_64'
+}()
+
+def abiToNdkArch = [
+    'arm64-v8a'  : 'aarch64-linux-android',
+    'armeabi-v7a': 'arm-linux-androideabi',
+    'x86_64'     : 'x86_64-linux-android',
+    'x86'        : 'i686-linux-android',
+]
+
+tasks.register('copyCxxShared') {
+    description = 'Copy libc++_shared.so from the NDK sysroot into jniLibs/'
+    doLast {
+        def ndkDir = android.ndkDirectory
+        if (ndkDir == null || !ndkDir.exists()) {
+            throw new GradleException(
+                "Android NDK not found. Install it via SDK Manager and set " +
+                "ndkVersion in build.gradle, or set ANDROID_NDK_HOME.")
+        }
+        android.defaultConfig.ndk.abiFilters.each { abi ->
+            def arch = abiToNdkArch[abi]
+            if (arch == null) {
+                logger.warn("copyCxxShared: skipping unknown ABI '${abi}'")
+                return
+            }
+            def src = file(
+                "${ndkDir}/toolchains/llvm/prebuilt/${hostTag}/sysroot/" +
+                "usr/lib/${arch}/libc++_shared.so"
+            )
+            def destDir = file("src/main/jniLibs/${abi}")
+            destDir.mkdirs()
+            if (!src.exists()) {
+                throw new GradleException(
+                    "libc++_shared.so missing at ${src}. Wrong NDK version?")
+            }
+            copy {
+                from src
+                into destDir
+            }
+            logger.lifecycle("copyCxxShared: ${abi} <- ${src.name}")
+        }
+    }
+}
+
+preBuild.dependsOn('copyCxxShared')

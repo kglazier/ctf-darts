@@ -48,7 +48,7 @@ fn detect_tag(
     let mut tagged: std::collections::HashSet<Entity> = std::collections::HashSet::new();
 
     for i in 0..entries.len() {
-        let (_a_entity, a_pos, a_team, a_facing, _, a_thrust) = entries[i];
+        let (_a_entity, a_pos, a_team, a_facing, a_carrying, a_thrust) = entries[i];
         let forward = Vec2::new(a_facing.cos(), a_facing.sin());
         for j in 0..entries.len() {
             if i == j { continue; }
@@ -60,18 +60,36 @@ fn detect_tag(
             let dist = diff.length();
             if dist > TAG_RANGE || dist < 0.0001 { continue; }
 
-            let dir = diff / dist;
-            let dot = forward.dot(dir).clamp(-1.0, 1.0);
-            if dot.acos() > TAG_CONE_HALF_ANGLE { continue; }
-
             // Use the authoritative flag state, not the entries snapshot —
             // pickup's CarryingFlag insert may still be deferred.
             let _ = b_carrying;
             let b_carries = flags
                 .iter()
                 .any(|f| matches!(f.state, FlagState::Carried(c) if c == b_entity));
-            // A non-carrier is only vulnerable to sprinting attackers.
-            if !(b_carries || a_thrust) { continue; }
+
+            // Carriers are normally prey, not predators — boosting just runs
+            // them home faster, doesn't turn them into a battering ram.
+            // EXCEPTION: when both ships carry, they mutually annihilate
+            // (the loop runs again with roles swapped, so each gets tagged).
+            if a_carrying.is_some() && !b_carries {
+                continue;
+            }
+
+            if b_carries {
+                // Carriers die on any contact — no facing-cone requirement,
+                // no boost requirement. Bumping their side counts.
+            } else {
+                // Non-carrier targets are only vulnerable to a sprinting
+                // attacker hitting them in their forward cone.
+                if !a_thrust {
+                    continue;
+                }
+                let dir = diff / dist;
+                let dot = forward.dot(dir).clamp(-1.0, 1.0);
+                if dot.acos() > TAG_CONE_HALF_ANGLE {
+                    continue;
+                }
+            }
 
             // Drop any flag currently marked as carried by b.
             for mut flag in flags.iter_mut() {

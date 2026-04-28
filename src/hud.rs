@@ -36,6 +36,18 @@ pub struct PanelHeader;
 #[derive(Component)]
 pub struct PanelBody;
 
+/// Sub-container of `PanelBody` that holds one row per bot. Kept
+/// separate from the team-adjust rows so we can append/remove bot rows
+/// dynamically without disturbing the +/- controls below.
+#[derive(Component)]
+pub struct BotRowsContainer;
+
+/// Marker on a bot row pointing back at the bot entity it represents.
+/// Lets `sync_bot_hud_rows` find and despawn the right row when a bot
+/// goes away.
+#[derive(Component)]
+pub struct BotHudRow(pub Entity);
+
 #[derive(Component)]
 pub struct PanelChevron;
 
@@ -91,6 +103,7 @@ impl Plugin for HudPlugin {
                     update_mode_toggle_text,
                     update_sprint_button_text,
                     handle_team_adjust,
+                    sync_bot_hud_rows,
                 )
                     .in_set(GameSet::Hud),
             );
@@ -194,8 +207,13 @@ pub fn setup_bot_hud(
     mut commands: Commands,
     bots: Query<(Entity, &Ship, &BotNumber, Option<&AllyBot>), With<BotDifficulty>>,
     endless: Res<crate::game::EndlessMode>,
+    net_mode: Res<crate::net::NetworkMode>,
 ) {
     let endless = endless.0;
+    // Only the host (solo or OnlineHost) can change bot counts mid-match;
+    // online clients see read-only bot rows. Without this every client
+    // would race to add bots and the world would diverge.
+    let can_adjust = *net_mode != crate::net::NetworkMode::OnlineClient;
     commands
         .spawn((
             NodeBundle {
@@ -262,84 +280,153 @@ pub fn setup_bot_hud(
                     PanelBody,
                 ))
                 .with_children(|body| {
-                    // Order rows by bot number for stable display.
-                    let mut rows: Vec<_> = bots.iter().collect();
-                    rows.sort_by_key(|(_, _, n, _)| n.0);
-                    for (bot_entity, ship, number, ally) in rows {
-                        let is_ally = ally.is_some();
-                        // Story mode: only show ally rows — the player can't
-                        // change enemy settings mid-match.
-                        if !endless && !is_ally {
-                            continue;
-                        }
-
-                        body.spawn(NodeBundle {
+                    // Bot rows live in their own sub-container so the sync
+                    // system can append/remove rows without disturbing the
+                    // team-adjust rows below.
+                    body.spawn((
+                        NodeBundle {
                             style: Style {
-                                flex_direction: FlexDirection::Row,
-                                align_items: AlignItems::Center,
-                                column_gap: Val::Px(8.0),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(6.0),
                                 ..default()
                             },
                             ..default()
-                        })
-                        .with_children(|row| {
-                            // Team-color dot
-                            row.spawn(NodeBundle {
-                                style: Style {
-                                    width: Val::Px(12.0),
-                                    height: Val::Px(12.0),
-                                    ..default()
-                                },
-                                background_color: ship.team.color().into(),
-                                border_radius: BorderRadius::MAX,
-                                ..default()
-                            });
-
-                            // Bot number
-                            row.spawn(NodeBundle {
-                                style: Style {
-                                    width: Val::Px(22.0),
-                                    ..default()
-                                },
-                                ..default()
-                            })
-                            .with_children(|c| {
-                                c.spawn(TextBundle::from_section(
-                                    format!("{}", number.0),
-                                    TextStyle {
-                                        font_size: 18.0,
-                                        color: Color::srgb(1.0, 1.0, 0.4),
-                                        ..default()
-                                    },
-                                ));
-                            });
-
-                            // Mode chip (allies only)
-                            if is_ally {
-                                spawn_chip(row, bot_entity, ChipKind::Mode);
-                            } else {
-                                row.spawn(NodeBundle {
-                                    style: Style {
-                                        width: Val::Px(34.0),
-                                        height: Val::Px(28.0),
-                                        ..default()
-                                    },
-                                    ..default()
-                                });
+                        },
+                        BotRowsContainer,
+                    ))
+                    .with_children(|container| {
+                        // Initial population. The sync system also runs on
+                        // the same frame via Added<BotDifficulty>, but we
+                        // spawn rows here too so the panel never appears
+                        // empty for a frame.
+                        let mut rows: Vec<_> = bots.iter().collect();
+                        rows.sort_by_key(|(_, _, n, _)| n.0);
+                        for (bot_entity, ship, number, ally) in rows {
+                            let is_ally = ally.is_some();
+                            if !endless && !is_ally {
+                                continue;
                             }
+                            spawn_bot_row(container, bot_entity, ship.team, number.0, is_ally);
+                        }
+                    });
 
-                            // Difficulty chip (always)
-                            spawn_chip(row, bot_entity, ChipKind::Difficulty);
-                        });
-                    }
-
-                    // Endless-only: team +/- controls.
-                    if endless {
+                    // Endless-only: team +/- controls. Hidden on online
+                    // clients (only host owns roster mutations).
+                    if endless && can_adjust {
                         spawn_team_adjust_row(body, "Red allies", true);
                         spawn_team_adjust_row(body, "Blue enemies", false);
                     }
                 });
         });
+}
+
+/// Spawn one bot HUD row into `parent`. Called from initial setup AND
+/// from the sync system when a bot is added mid-match.
+fn spawn_bot_row(
+    parent: &mut ChildBuilder,
+    bot: Entity,
+    team: Team,
+    number: u32,
+    is_ally: bool,
+) {
+    parent
+        .spawn((
+            NodeBundle {
+                style: Style {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                },
+                ..default()
+            },
+            BotHudRow(bot),
+        ))
+        .with_children(|row| {
+            row.spawn(NodeBundle {
+                style: Style {
+                    width: Val::Px(12.0),
+                    height: Val::Px(12.0),
+                    ..default()
+                },
+                background_color: team.color().into(),
+                border_radius: BorderRadius::MAX,
+                ..default()
+            });
+            row.spawn(NodeBundle {
+                style: Style { width: Val::Px(22.0), ..default() },
+                ..default()
+            })
+            .with_children(|c| {
+                c.spawn(TextBundle::from_section(
+                    format!("{}", number),
+                    TextStyle {
+                        font_size: 18.0,
+                        color: Color::srgb(1.0, 1.0, 0.4),
+                        ..default()
+                    },
+                ));
+            });
+            if is_ally {
+                spawn_chip(row, bot, ChipKind::Mode);
+            } else {
+                // Spacer so columns line up between ally and enemy rows.
+                row.spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Px(34.0),
+                        height: Val::Px(28.0),
+                        ..default()
+                    },
+                    ..default()
+                });
+            }
+            spawn_chip(row, bot, ChipKind::Difficulty);
+        });
+}
+
+/// Add HUD rows for newly-spawned bots, despawn rows for bots that
+/// vanished. Story mode skips enemy bots — the player can't tune them.
+fn sync_bot_hud_rows(
+    mut commands: Commands,
+    container_q: Query<Entity, With<BotRowsContainer>>,
+    rows_q: Query<(Entity, &BotHudRow)>,
+    added_bots: Query<
+        (Entity, &Ship, &BotNumber, Option<&AllyBot>),
+        (Added<BotDifficulty>, Without<BotHudRow>),
+    >,
+    mut removed_bots: RemovedComponents<BotDifficulty>,
+    endless: Res<crate::game::EndlessMode>,
+) {
+    let endless = endless.0;
+    let Ok(container) = container_q.get_single() else {
+        return;
+    };
+
+    // Add rows for bots that just appeared.
+    for (bot_entity, ship, number, ally) in &added_bots {
+        let is_ally = ally.is_some();
+        if !endless && !is_ally {
+            continue;
+        }
+        // Skip if a row already exists (initial setup may have spawned one
+        // before this system runs — Added fires on the same frame).
+        if rows_q.iter().any(|(_, r)| r.0 == bot_entity) {
+            continue;
+        }
+        commands.entity(container).with_children(|parent| {
+            spawn_bot_row(parent, bot_entity, ship.team, number.0, is_ally);
+        });
+    }
+
+    // Remove rows for bots that despawned (BotDifficulty was removed,
+    // either explicitly or because the entity went away).
+    for bot_entity in removed_bots.read() {
+        for (row_entity, row) in &rows_q {
+            if row.0 == bot_entity {
+                commands.entity(row_entity).despawn_recursive();
+            }
+        }
+    }
 }
 
 fn spawn_team_adjust_row(body: &mut ChildBuilder, label: &str, red: bool) {
@@ -391,19 +478,91 @@ fn spawn_team_adjust_row(body: &mut ChildBuilder, label: &str, red: bool) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_team_adjust(
     q: Query<(&Interaction, &TeamAdjust), Changed<Interaction>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
     mut counts: ResMut<crate::game::BotCounts>,
-    mut next: ResMut<NextState<crate::game::AppState>>,
+    net_mode: Res<crate::net::NetworkMode>,
+    socket: Option<ResMut<crate::net::NetSocket>>,
+    peers: Res<crate::net::ConnectedPeers>,
+    existing_ships: Query<(&Ship, &crate::net::NetId, Option<&BotNumber>)>,
+    bots: Query<(Entity, &Ship, &crate::net::NetId), With<BotDifficulty>>,
+    labels: Query<(Entity, &crate::bot::LabelFor), With<crate::bot::BotNumberLabel>>,
 ) {
+    if *net_mode == crate::net::NetworkMode::OnlineClient {
+        return;
+    }
+    let mut socket = socket;
     for (i, adj) in &q {
-        if *i == Interaction::Pressed {
-            if adj.red {
-                counts.red_allies = (counts.red_allies as i32 + adj.delta).clamp(0, 4) as u32;
-            } else {
-                counts.blue_enemies = (counts.blue_enemies as i32 + adj.delta).clamp(1, 4) as u32;
+        if *i != Interaction::Pressed {
+            continue;
+        }
+        let team = if adj.red { crate::team::Team::Red } else { crate::team::Team::Blue };
+        if adj.delta > 0 {
+            // Add a bot. Cap per-side to keep the arena from getting absurd.
+            let current = if adj.red { counts.red_allies } else { counts.blue_enemies };
+            if current >= 4 {
+                continue;
             }
-            next.set(crate::game::AppState::Restarting);
+            let difficulty = if adj.red { counts.red_difficulty } else { counts.blue_difficulty };
+            let net_id = crate::player::add_bot(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                team,
+                difficulty,
+                &existing_ships,
+                None,
+            );
+            if adj.red {
+                counts.red_allies += 1;
+            } else {
+                counts.blue_enemies += 1;
+            }
+            // Broadcast so clients add the same bot with the same NetId.
+            if let Some(s) = socket.as_deref_mut() {
+                crate::net::broadcast(
+                    s,
+                    &peers,
+                    &crate::net::NetMessage::Lobby(crate::net::LobbyEvent::AddBot {
+                        is_blue: !adj.red,
+                        net_id,
+                        difficulty,
+                    }),
+                );
+            }
+        } else {
+            // Remove a bot. Floor at 0 for red allies, 1 for blue enemies
+            // to keep the match playable (someone has to chase the flag).
+            let floor: u32 = if adj.red { 0 } else { 1 };
+            let current = if adj.red { counts.red_allies } else { counts.blue_enemies };
+            if current <= floor {
+                continue;
+            }
+            if let Some(removed_id) = crate::player::remove_last_bot(
+                &mut commands,
+                team,
+                &bots,
+                &labels,
+            ) {
+                if adj.red {
+                    counts.red_allies -= 1;
+                } else {
+                    counts.blue_enemies -= 1;
+                }
+                if let Some(s) = socket.as_deref_mut() {
+                    crate::net::broadcast(
+                        s,
+                        &peers,
+                        &crate::net::NetMessage::Lobby(crate::net::LobbyEvent::RemoveBot {
+                            net_id: removed_id,
+                        }),
+                    );
+                }
+            }
         }
     }
 }

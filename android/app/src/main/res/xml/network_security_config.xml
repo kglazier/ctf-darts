@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Default: cleartext disallowed everywhere. -->
+    <base-config cleartextTrafficPermitted="false" />
+
+    <!-- Exception: our signaling server's IP. This is required because
+         native Rust code on some Android devices can't do DNS, so we
+         connect by IP and use ws:// rather than wss://. The signaling
+         payloads are non-sensitive (lobby code + ICE candidates); the
+         actual gameplay traffic is end-to-end encrypted via WebRTC's
+         DTLS-SRTP regardless of this setting. Update the IP here if
+         the signaling server's address ever changes (it shouldn't —
+         fly.io anycast IPs are stable per-app). -->
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Fly.io's dedicated IPv6 for our signaling app. Get the
+             current value via `nslookup space-boosters-signaling-kg.fly.dev`
+             (look for the AAAA record). -->
+        <domain includeSubdomains="false">2a09:8280:1::10b:a1c3:0</domain>
+    </domain-config>
+</network-security-config>

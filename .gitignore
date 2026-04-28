@@ -17,6 +17,7 @@ Cargo.lock.bak
 # OS
 .DS_Store
 Thumbs.db
+*.stackdump
 
 # App data
 /progress.json

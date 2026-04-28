@@ -130,39 +130,49 @@ fn resolve_wall_collisions(
         let radius = match col {
             Collider::Circle { radius } => *radius,
         };
-
-        let mut pos = ship_tf.translation.truncate();
-        let mut v = vel.0;
-
-        for (wall_tf, wall) in &walls {
-            let wall_center = wall_tf.translation.truncate();
-            let diff = pos - wall_center;
-            let clamped = Vec2::new(
-                diff.x.clamp(-wall.half_extents.x, wall.half_extents.x),
-                diff.y.clamp(-wall.half_extents.y, wall.half_extents.y),
-            );
-            let closest = wall_center + clamped;
-            let offset = pos - closest;
-            let dist = offset.length();
-            if dist < radius && dist > 0.0001 {
-                let normal = offset / dist;
-                pos = closest + normal * radius;
-                let dot = v.dot(normal);
-                if dot < 0.0 {
-                    v -= normal * dot;
-                }
-            } else if dist <= 0.0001 {
-                let push = if wall.half_extents.x - diff.x.abs() < wall.half_extents.y - diff.y.abs() {
-                    Vec2::new(diff.x.signum(), 0.0)
-                } else {
-                    Vec2::new(0.0, diff.y.signum())
-                };
-                pos = wall_center + push * (wall.half_extents * push.abs() + Vec2::splat(radius + 1.0));
-            }
-        }
-
-        ship_tf.translation.x = pos.x;
-        ship_tf.translation.y = pos.y;
-        vel.0 = v;
+        let pos = ship_tf.translation.truncate();
+        let (new_pos, new_vel) = resolve_against_walls(pos, vel.0, radius, &walls);
+        ship_tf.translation.x = new_pos.x;
+        ship_tf.translation.y = new_pos.y;
+        vel.0 = new_vel;
     }
+}
+
+/// Resolve a single ship's collision against all walls. Pulled out so
+/// online clients can run the same logic on their local ship in
+/// `client_predict_local` (otherwise the local ship would slide through
+/// walls until the host's snapshot teleports it back).
+pub fn resolve_against_walls(
+    mut pos: Vec2,
+    mut v: Vec2,
+    radius: f32,
+    walls: &Query<(&Transform, &Wall), Without<Velocity>>,
+) -> (Vec2, Vec2) {
+    for (wall_tf, wall) in walls {
+        let wall_center = wall_tf.translation.truncate();
+        let diff = pos - wall_center;
+        let clamped = Vec2::new(
+            diff.x.clamp(-wall.half_extents.x, wall.half_extents.x),
+            diff.y.clamp(-wall.half_extents.y, wall.half_extents.y),
+        );
+        let closest = wall_center + clamped;
+        let offset = pos - closest;
+        let dist = offset.length();
+        if dist < radius && dist > 0.0001 {
+            let normal = offset / dist;
+            pos = closest + normal * radius;
+            let dot = v.dot(normal);
+            if dot < 0.0 {
+                v -= normal * dot;
+            }
+        } else if dist <= 0.0001 {
+            let push = if wall.half_extents.x - diff.x.abs() < wall.half_extents.y - diff.y.abs() {
+                Vec2::new(diff.x.signum(), 0.0)
+            } else {
+                Vec2::new(0.0, diff.y.signum())
+            };
+            pos = wall_center + push * (wall.half_extents * push.abs() + Vec2::splat(radius + 1.0));
+        }
+    }
+    (pos, v)
 }

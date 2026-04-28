@@ -42,11 +42,24 @@ impl Plugin for FlagPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Score>()
             .add_event::<CaptureEvent>()
+            // Authoritative gameplay (host-only via Gameplay set gating):
+            // pickup detection, scoring, dropped-flag pulsing animation
+            // logic that depends on carrier ownership.
             .add_systems(
                 Update,
-                (pickup_or_return, carry_flag, capture_flag, pulse_dropped)
+                (pickup_or_return, capture_flag, pulse_dropped)
                     .chain()
                     .in_set(GameSet::Gameplay),
+            )
+            // Visual flag-follow runs on EVERY peer. carry_flag just
+            // copies the carrier's transform to the flag — pure visual,
+            // safe to run on clients. Without this, clients would see
+            // the flag stuck at home base while a peer carries it.
+            .add_systems(
+                Update,
+                carry_flag
+                    .in_set(GameSet::Hud)
+                    .run_if(crate::game::playing_unpaused),
             );
     }
 }
@@ -110,10 +123,12 @@ fn pickup_or_return(
 
 fn carry_flag(
     mut flags: Query<(&mut Transform, &Flag)>,
-    carriers: Query<
-        &Transform,
-        (With<CarryingFlag>, Without<Flag>, Without<crate::tag::Respawning>),
-    >,
+    // No `With<CarryingFlag>` — clients don't get the CarryingFlag
+    // component inserted (only Flag.state is replicated). The flag's
+    // FlagState::Carried(entity) is the authoritative pointer to the
+    // carrier on both host and client. Filtering by CarryingFlag was a
+    // belt-and-suspenders that broke client-side flag follow.
+    carriers: Query<&Transform, (Without<Flag>, Without<crate::tag::Respawning>)>,
 ) {
     for (mut flag_tf, flag) in &mut flags {
         match flag.state {

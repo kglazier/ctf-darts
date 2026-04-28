@@ -1,0 +1,45 @@
+# Fly.io deployment for the matchbox signaling server.
+#
+# The matchbox project publishes a prebuilt binary; we just point Fly at the
+# upstream Docker image and expose port 3536 (matchbox_server's default).
+# Free tier (shared-cpu-1x, 256MB) is plenty for a handful of lobbies — the
+# server only relays signaling traffic; actual game packets stay P2P
+# between peers via WebRTC.
+#
+# First-time deploy:
+#   1. Install flyctl: https://fly.io/docs/hands-on/install-flyctl/
+#   2. fly auth login
+#   3. From this directory: fly launch --copy-config --no-deploy
+#      (Pick a unique app name; Fly will rewrite `app = "..."` below.)
+#   4. fly deploy
+#   5. Note the app URL, e.g. `wss://your-app.fly.dev`
+#   6. Set SPACE_BOOSTERS_SIGNAL=wss://your-app.fly.dev in your client env,
+#      or edit DEFAULT_SIGNAL_URL in src/net.rs.
+
+app = "space-boosters-signaling-kg"
+primary_region = "sjc"
+
+# Build from the local Dockerfile — the upstream GHCR image isn't fully
+# public so Fly can't pull it without auth. Building from source via
+# `cargo install matchbox_server` takes ~3 min on first deploy then layer
+# caches for subsequent ones.
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 3536
+  # Allow cleartext on port 80. Some native Android Rust apps can't do TLS
+  # to fly.dev because they can't resolve the hostname (NativeActivity's
+  # bindProcessToNetwork returns false on some devices, breaking native
+  # libc DNS). Using ws:// + IP directly bypasses both DNS and TLS. The
+  # WebRTC peer-to-peer connection itself stays encrypted (DTLS-SRTP);
+  # only the signaling exchange is cleartext, and it carries only ICE
+  # candidates and lobby codes — no user data.
+  force_https = false
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

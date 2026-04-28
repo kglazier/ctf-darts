@@ -1,0 +1,13 @@
+[package]
+name = "android_net_bind"
+version = "0.1.0"
+edition = "2021"
+description = "Bind individual sockets and DNS lookups to a specific Android Network via NDK android_setsocknetwork / android_getaddrinfofornetwork"
+publish = false
+
+[dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"

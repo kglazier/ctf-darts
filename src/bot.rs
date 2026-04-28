@@ -298,6 +298,7 @@ fn own_state_chase_candidate(
     self_entity: Entity,
     team: Team,
     role: BotRole,
+    self_carries: bool,
     ships_snap: &[ShipInfo],
     pos: Vec2,
 ) -> Option<(ShipInfo, bool)> {
@@ -309,7 +310,15 @@ fn own_state_chase_candidate(
         .filter(|s| s.entity != self_entity && s.entity != thief && s.team == team)
         .map(|s| s.pos.distance(thief_info.pos))
         .fold(f32::INFINITY, f32::min);
-    let chase = matches!(role, BotRole::Guardian) || my_dist + 100.0 < teammate_best;
+    // If WE'RE carrying and our flag is also stolen, mutual annihilation
+    // (carrier-vs-carrier) is the only path to recovery — no one else on
+    // our team can do anything useful while neither flag is at base. So
+    // ALWAYS chase in that situation, regardless of role or distance.
+    // Otherwise, normal: Guardians always chase, Grabbers only if clearly
+    // best positioned (100px buffer to avoid two bots both rushing).
+    let chase = self_carries
+        || matches!(role, BotRole::Guardian)
+        || my_dist + 100.0 < teammate_best;
     Some((thief_info, chase))
 }
 
@@ -485,6 +494,7 @@ fn drive_bots(
                 bot_entity,
                 ship.team,
                 *role,
+                /*self_carries=*/ true,
                 &ships_snap,
                 pos,
             ) {
@@ -579,22 +589,36 @@ fn drive_bots(
         // Boost gating — on-path kills are a Hard-only skill (Easy/Medium
         // should not surgically boost-intercept). In Shooter mode nobody
         // boosts; the button fires projectiles instead.
-        let want_boost = if *mode != crate::projectile::GameMode::Classic {
-            false
-        } else if on_path_kill && *difficulty == BotDifficulty::Hard && stamina.current > 0.45 {
+        let was_thrusting = thrusting.0;
+        // Hysteresis: starting a fresh boost burst requires substantially
+        // recharged stamina, but an in-progress burst can drain to empty.
+        // Without this, bots flick boost on the instant stamina crosses the
+        // low-water mark, producing a strobe that no human can match.
+        let start_min = match *difficulty {
+            BotDifficulty::Easy => 1.1,
+            BotDifficulty::Medium => 0.85,
+            BotDifficulty::Hard => 0.7,
+        };
+        let stamina_ok = if was_thrusting {
+            stamina.current > 0.0
+        } else {
+            stamina.current >= start_min
+        };
+        let raw_want = if on_path_kill && *difficulty == BotDifficulty::Hard {
             true
         } else {
             match (*difficulty, urgency) {
                 (BotDifficulty::Easy, _) => false,
-                (BotDifficulty::Medium, Urgency::High) => stamina.current > 0.25,
+                (BotDifficulty::Medium, Urgency::High) => true,
                 (BotDifficulty::Medium, _) => false,
-                // Hard is one notch above Medium — still suffers boost
-                // inefficiency; only boosts confidently when stamina is fresh.
-                (BotDifficulty::Hard, Urgency::High) => stamina.current > 0.2,
-                (BotDifficulty::Hard, Urgency::Med) => stamina.current > 0.7,
+                (BotDifficulty::Hard, Urgency::High) => true,
+                (BotDifficulty::Hard, Urgency::Med) => was_thrusting,
                 (BotDifficulty::Hard, Urgency::Low) => false,
             }
         };
+        let want_boost = *mode == crate::projectile::GameMode::Classic
+            && raw_want
+            && stamina_ok;
         thrusting.0 = want_boost;
         if thrusting.0 {
             stamina.current = (stamina.current - dt * 0.7).max(0.0);
@@ -874,26 +898,29 @@ fn segment_intersects_aabb(p0: Vec2, p1: Vec2, center: Vec2, half: Vec2) -> bool
     true
 }
 
-/// Keep each number label planted on its ship, upright, hidden during respawn.
+/// Keep each number label planted on its ship, upright, hidden when the
+/// ship itself is hidden. We mirror the SHIP's Visibility (not the
+/// Respawning component) because online clients don't get a Respawning
+/// component on remote ships — they replicate visibility from snapshot
+/// instead. Reading ship visibility works on host AND client uniformly.
 fn update_bot_number_labels(
-    ships: Query<(&Transform, Option<&Respawning>), Without<BotNumberLabel>>,
+    ships: Query<(&Transform, &Visibility), Without<BotNumberLabel>>,
     mut labels: Query<
         (&mut Transform, &mut Visibility, &LabelFor, Option<&LabelOffset>),
         With<BotNumberLabel>,
     >,
 ) {
     for (mut ltf, mut vis, target, offset) in &mut labels {
-        let Ok((ship_tf, respawning)) = ships.get(target.0) else {
+        let Ok((ship_tf, ship_vis)) = ships.get(target.0) else {
             continue;
         };
         let off = offset.map(|o| o.0).unwrap_or(Vec2::ZERO);
         let z = ltf.translation.z;
         ltf.translation = (ship_tf.translation.truncate() + off).extend(z);
         ltf.rotation = Quat::IDENTITY;
-        *vis = if respawning.is_some() {
-            Visibility::Hidden
-        } else {
-            Visibility::Visible
+        *vis = match ship_vis {
+            Visibility::Hidden => Visibility::Hidden,
+            _ => Visibility::Visible,
         };
     }
 }

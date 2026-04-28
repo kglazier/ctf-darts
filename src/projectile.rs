@@ -14,7 +14,7 @@ use crate::GameSet;
 pub const PROJECTILE_RADIUS: f32 = 6.0;
 pub const PROJECTILE_SPEED: f32 = 640.0;
 pub const PROJECTILE_LIFE_SECS: f32 = 1.6;
-pub const FIRE_COOLDOWN_SECS: f32 = 0.4;
+pub const FIRE_COOLDOWN_SECS: f32 = 0.7;
 
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum GameMode {
@@ -59,7 +59,10 @@ pub struct ProjectilePlugin;
 impl Plugin for ProjectilePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GameMode>()
-            .add_systems(Update, (player_shoot, bot_shoot).in_set(GameSet::Ai))
+            .add_systems(
+                Update,
+                (player_shoot, bot_shoot, delay_fire_after_respawn).in_set(GameSet::Ai),
+            )
             .add_systems(
                 Update,
                 (
@@ -71,6 +74,22 @@ impl Plugin for ProjectilePlugin {
                     .chain()
                     .in_set(GameSet::Gameplay),
             );
+    }
+}
+
+/// When a ship comes out of Respawning, reset its FireCooldown to a small
+/// fresh delay. Without this the bot's cooldown ran down during the 2s
+/// respawn window, so the moment they reappeared they could fire on
+/// anyone in their cone — felt like a sniper turret.
+const POST_RESPAWN_FIRE_DELAY: f32 = 1.0;
+fn delay_fire_after_respawn(
+    mut removed: RemovedComponents<Respawning>,
+    mut q: Query<&mut FireCooldown>,
+) {
+    for entity in removed.read() {
+        if let Ok(mut cd) = q.get_mut(entity) {
+            cd.0 = Timer::from_seconds(POST_RESPAWN_FIRE_DELAY, TimerMode::Once);
+        }
     }
 }
 
@@ -102,16 +121,15 @@ fn spawn_projectile(
 fn player_shoot(
     mode: Res<GameMode>,
     time: Res<Time>,
-    input: Res<PlayerInput>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut players: Query<
-        (&Transform, &Facing, &Ship, &mut FireCooldown),
+        (&Transform, &Facing, &Ship, &PlayerInput, &mut FireCooldown),
         (With<PlayerControlled>, Without<Respawning>, Without<CarryingFlag>),
     >,
 ) {
-    for (tf, facing, ship, mut cd) in &mut players {
+    for (tf, facing, ship, input, mut cd) in &mut players {
         cd.0.tick(time.delta());
         if *mode != GameMode::Shooter {
             continue;
@@ -168,11 +186,11 @@ fn bot_shoot(
         // Difficulty curves — Easy shoots slowly with big aim jitter; Hard is
         // the previous sniper.
         let (fire_range, cooldown_secs, jitter_rad): (f32, f32, f32) = match *difficulty {
-            BotDifficulty::Easy => (180.0, 1.0, 0.28),
-            BotDifficulty::Medium => (320.0, 0.55, 0.10),
+            BotDifficulty::Easy => (180.0, 1.5, 0.40),
+            BotDifficulty::Medium => (300.0, 1.0, 0.30),
             // Hard is one notch above Medium — slightly longer range and
             // faster cooldown, but still meaningfully off-perfect aim.
-            BotDifficulty::Hard => (380.0, 0.45, 0.06),
+            BotDifficulty::Hard => (360.0, 0.85, 0.20),
         };
         const CONE_COS: f32 = 0.94;
 
