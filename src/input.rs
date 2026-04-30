@@ -318,16 +318,20 @@ pub fn apply_input_to_player(
             &MaxSpeed,
             &mut Thrusting,
             &mut Stamina,
-            Option<&crate::flag::CarryingFlag>,
         ),
         // All human-driven ships: the local PlayerControlled AND online
         // RemoteHumans (whose PlayerInput is fed by network packets via
         // host_apply_remote_input on the host side). Bots are excluded
         // since they have BotDifficulty and are driven by drive_bots.
-        Without<crate::bot::BotDifficulty>,
+        // Respawning ships are excluded so a held boost button can't
+        // drain stamina while dead.
+        (
+            Without<crate::bot::BotDifficulty>,
+            Without<crate::tag::Respawning>,
+        ),
     >,
 ) {
-    for (input, mut vel, max_speed, mut thrusting, mut stamina, carrying) in &mut q {
+    for (input, mut vel, max_speed, mut thrusting, mut stamina) in &mut q {
 
     // ACCEL must be > DRAG * (max_speed * SPRINT_MUL) or drag-equilibrium
     // pulls the player below the boost cap, leaving bots (which only have
@@ -336,9 +340,7 @@ pub fn apply_input_to_player(
     // (1400) gave equilibrium ~466 and a permanently slower player.
     const ACCEL: f32 = 2000.0;
     const DRAG: f32 = 3.0;
-    // Boost is weaker while carrying — carriers are the vulnerable party.
     const SPRINT_MUL: f32 = 1.8;
-    const SPRINT_MUL_CARRY: f32 = 1.4;
     const SPRINT_DRAIN: f32 = 0.7;
 
     let dt = time.delta_seconds();
@@ -346,16 +348,24 @@ pub fn apply_input_to_player(
     let wants_sprint =
         *mode == crate::projectile::GameMode::Classic && input.sprint && stamina.current > 0.05;
     thrusting.0 = wants_sprint;
-    let sprint_mul = if carrying.is_some() { SPRINT_MUL_CARRY } else { SPRINT_MUL };
     let current_max = if wants_sprint {
         stamina.current = (stamina.current - dt * SPRINT_DRAIN).max(0.0);
-        max_speed.0 * sprint_mul
+        max_speed.0 * SPRINT_MUL
     } else {
         max_speed.0
     };
 
-    if input.move_dir.length_squared() > 0.01 {
-        vel.0 += input.move_dir * ACCEL * dt;
+    // While boosting, treat any non-deadzone input as full deflection —
+    // touch joysticks rarely reach length 1.0 (need to drag the thumb to
+    // the base edge), so partial deflection would drop drag-equilibrium
+    // below the boost cap and the player couldn't keep up with bots.
+    let thrust_dir = if wants_sprint && input.move_dir.length_squared() > 0.01 {
+        input.move_dir.normalize()
+    } else {
+        input.move_dir
+    };
+    if thrust_dir.length_squared() > 0.01 {
+        vel.0 += thrust_dir * ACCEL * dt;
     }
     vel.0 *= (1.0 - DRAG * dt).max(0.0);
     if vel.0.length() > current_max {

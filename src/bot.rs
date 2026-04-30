@@ -474,6 +474,17 @@ fn drive_bots(
             .map(|(tf, _)| tf.translation.truncate())
             .unwrap_or(enemy_flag_pos);
 
+        // A teammate (not us) running the enemy flag home. When present, we
+        // bias toward escorting them: hunt enemies near the carrier and step
+        // out of their path home (lane avoidance, below).
+        let teammate_carrier: Option<ShipInfo> = match enemy_state {
+            FlagState::Carried(c) if c != bot_entity => ships_snap
+                .iter()
+                .find(|s| s.entity == c && s.team == ship.team)
+                .copied(),
+            _ => None,
+        };
+
         let (raw_target, urgency): (Option<Vec2>, Urgency) = if carrying.is_some() {
             // Can't score while our flag is in enemy hands. Instead of sitting
             // on base waiting to get tagged, evade: flee the nearest threat
@@ -538,6 +549,7 @@ fn drive_bots(
                     enemy_state,
                     enemy_flag_pos,
                     own_base_pos,
+                    teammate_carrier,
                     &ships_snap,
                 ),
                 BotRole::Guardian => guardian_target(
@@ -548,6 +560,7 @@ fn drive_bots(
                     own_flag_pos,
                     own_base_pos,
                     enemy_base_pos,
+                    teammate_carrier,
                     &ships_snap,
                 ),
             }
@@ -626,9 +639,8 @@ fn drive_bots(
                 thrusting.0 = false;
             }
         }
-        let sprint_mul: f32 = if carrying.is_some() { 1.4 } else { 1.8 };
         let current_max = if thrusting.0 {
-            max_speed.0 * sprint_mul
+            max_speed.0 * 1.8
         } else {
             max_speed.0
         };
@@ -702,6 +714,27 @@ fn drive_bots(
             }
         }
 
+        // Carrier lane: when a teammate is running the enemy flag home, get
+        // off the line segment from carrier→own_base so we don't body-block
+        // their cap. Push perpendicular to the lane.
+        if let Some(carrier) = teammate_carrier {
+            let a = carrier.pos;
+            let b = own_base_pos;
+            let ab = b - a;
+            let len_sq = ab.length_squared();
+            if len_sq > 1.0 {
+                let t = ((pos - a).dot(ab) / len_sq).clamp(0.0, 1.0);
+                let closest = a + ab * t;
+                let off = pos - closest;
+                let d = off.length();
+                const LANE_WIDTH: f32 = 100.0;
+                if d > 0.01 && d < LANE_WIDTH {
+                    let strength = 1.0 - d / LANE_WIDTH;
+                    avoid += (off / d) * strength * 1.2;
+                }
+            }
+        }
+
         let wobble = if avoid.length_squared() < 0.04 && dist > 150.0 {
             let phase = t_now * 2.5 + bot_entity.index() as f32 * 1.3;
             Vec2::new(-dir.y, dir.x) * phase.sin() * 0.12
@@ -737,16 +770,14 @@ fn grabber_target(
     enemy_state: FlagState,
     enemy_flag_pos: Vec2,
     own_base_pos: Vec2,
+    teammate_carrier: Option<ShipInfo>,
     ships_snap: &[ShipInfo],
 ) -> (Option<Vec2>, Urgency) {
-    // If a teammate is carrying the enemy flag, `enemy_flag_pos` is literally
-    // the teammate's position — driving toward it rams them. Pivot goals to
-    // protect our flag so the teammate can score.
-    let teammate_carries_enemy = matches!(
-        enemy_state,
-        FlagState::Carried(c) if ships_snap.iter().any(|s| s.entity == c && s.team == team)
-    );
-    if teammate_carries_enemy {
+    // A teammate is running the enemy flag home — `enemy_flag_pos` is their
+    // position, so chasing it would ram them. Pivot to either recover our own
+    // flag (if it's been stolen/dropped) or escort the carrier by hunting any
+    // enemy near them.
+    if let Some(carrier) = teammate_carrier {
         match own_state {
             FlagState::Carried(thief) => {
                 if let Some(ti) = ships_snap.iter().find(|s| s.entity == thief) {
@@ -756,6 +787,24 @@ fn grabber_target(
             }
             FlagState::Dropped(p) => return (Some(p), Urgency::Med),
             FlagState::Home => {
+                // Escort: hunt the closest enemy within 600u of the carrier
+                // so they can run the flag home unmolested. Without a nearby
+                // threat, post up at the cap zone (lane avoidance keeps us
+                // off the carrier's path home).
+                if let Some(t) = ships_snap
+                    .iter()
+                    .filter(|s| s.team != team && s.entity != self_entity)
+                    .filter(|s| s.pos.distance(carrier.pos) < 600.0)
+                    .min_by(|a, b| {
+                        a.pos
+                            .distance(carrier.pos)
+                            .partial_cmp(&b.pos.distance(carrier.pos))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                {
+                    let aim = intercept_point(pos, t.pos, t.vel, 480.0);
+                    return (Some(aim), Urgency::High);
+                }
                 return (Some(own_base_pos), Urgency::Low);
             }
         }
@@ -793,6 +842,7 @@ fn guardian_target(
     own_flag_pos: Vec2,
     own_base_pos: Vec2,
     enemy_base_pos: Vec2,
+    teammate_carrier: Option<ShipInfo>,
     ships_snap: &[ShipInfo],
 ) -> (Option<Vec2>, Urgency) {
     if let FlagState::Carried(thief) = own_state {
@@ -804,10 +854,17 @@ fn guardian_target(
     if matches!(own_state, FlagState::Dropped(_)) {
         return (Some(own_flag_pos), Urgency::Med);
     }
+    // Threats: enemies near our base OR near the teammate flag carrier — we
+    // want to peel chasers off them on the way home.
     let threat = ships_snap
         .iter()
         .filter(|s| s.entity != self_entity && s.team != team)
-        .filter(|s| s.pos.distance(own_base_pos) < 500.0)
+        .filter(|s| {
+            s.pos.distance(own_base_pos) < 500.0
+                || teammate_carrier
+                    .map(|c| s.pos.distance(c.pos) < 500.0)
+                    .unwrap_or(false)
+        })
         .min_by(|a, b| {
             a.pos
                 .distance(pos)

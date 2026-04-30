@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::flag::{CarryingFlag, Flag, FlagState};
 use crate::movement::Velocity;
-use crate::player::{Facing, Ship, Thrusting, SHIP_RADIUS};
+use crate::player::{Facing, Ship, Stamina, Thrusting, SHIP_RADIUS};
 use crate::GameSet;
 
 pub const TAG_RANGE: f32 = SHIP_RADIUS * 2.6;
@@ -121,14 +121,16 @@ fn tick_respawn(
         &mut Transform,
         &mut Visibility,
         &mut Velocity,
+        &mut Stamina,
     )>,
 ) {
-    for (entity, mut respawn, mut tf, mut vis, mut vel) in &mut q {
+    for (entity, mut respawn, mut tf, mut vis, mut vel, mut stamina) in &mut q {
         respawn.timer.tick(time.delta());
         if respawn.timer.finished() {
             tf.translation.x = respawn.point.x;
             tf.translation.y = respawn.point.y;
             vel.0 = Vec2::ZERO;
+            stamina.current = stamina.max;
             *vis = Visibility::Visible;
             commands.entity(entity).remove::<Respawning>();
         }
