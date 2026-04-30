@@ -1,0 +1,75 @@
+name: Build wasm + deploy to Vercel
+
+on:
+  push:
+    branches: [main]
+  # Lets you re-run the deploy from the Actions tab without a commit.
+  workflow_dispatch:
+
+env:
+  # Match the wasm-bindgen version in Cargo.lock — cli must equal lib.
+  # Bump in lockstep when bevy/wasm-bindgen updates.
+  WASM_BINDGEN_VERSION: 0.2.118
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      # Cache cargo registry + target dir. The first run is ~10min; cached
+      # runs land closer to ~3-5min (LTO link can't be cached but compile can).
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-wasm-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-wasm-${{ runner.os }}-
+
+      - name: Install wasm-bindgen-cli
+        run: |
+          if ! command -v wasm-bindgen >/dev/null || \
+             [ "$(wasm-bindgen --version | awk '{print $2}')" != "${{ env.WASM_BINDGEN_VERSION }}" ]; then
+            cargo install wasm-bindgen-cli --version "${{ env.WASM_BINDGEN_VERSION }}" --locked --force
+          fi
+
+      - name: Build wasm
+        run: |
+          cargo build --profile release-wasm --target wasm32-unknown-unknown --bin space_boosters
+          rm -rf web/pkg
+          wasm-bindgen --out-dir web/pkg --target web --no-typescript \
+            target/wasm32-unknown-unknown/release-wasm/space_boosters.wasm
+
+      - name: Stage assets
+        run: |
+          rm -rf web/assets
+          cp -r assets web/assets
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel project config
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+
+      - name: Deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          # --prod publishes to the production URL. Drop --prod for a
+          # preview deploy on PR branches.
+          vercel deploy --prod --token=$VERCEL_TOKEN \
+            --yes web

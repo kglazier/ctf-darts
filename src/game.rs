@@ -280,7 +280,15 @@ fn pause_on_focus_loss(
     mut events: EventReader<bevy::window::WindowFocused>,
     mut pause: ResMut<Paused>,
     state: Res<State<AppState>>,
+    net_mode: Res<crate::net::NetworkMode>,
 ) {
+    // Online matches can't pause — the other peers keep simulating, so
+    // pausing one side just desyncs it. Skip the auto-pause entirely in
+    // online mode (host or client) and let the match keep running while
+    // the window is in the background.
+    if *net_mode != crate::net::NetworkMode::Solo {
+        return;
+    }
     for ev in events.read() {
         if !ev.focused && matches!(state.get(), AppState::Playing) {
             pause.0 = true;

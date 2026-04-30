@@ -62,7 +62,9 @@ impl LobbyCode {
         // Tiny LCG seeded from system time. Plenty for a 4-letter code; not
         // remotely cryptographic — collisions are user-visible ("code
         // already in use, try again") rather than security-critical.
-        use std::time::{SystemTime, UNIX_EPOCH};
+        // web_time::SystemTime works on native AND wasm; std::time panics
+        // on wasm32-unknown-unknown.
+        use web_time::{SystemTime, UNIX_EPOCH};
         let mut seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -1110,15 +1112,15 @@ fn client_predict_local(
             &mut Facing,
             &mut Thrusting,
             &mut Stamina,
-            Option<&crate::flag::CarryingFlag>,
         ),
         (
             With<crate::player::PlayerControlled>,
             Without<crate::arena::Wall>,
+            Without<Respawning>,
         ),
     >,
 ) {
-    let Ok((input, mut tf, mut vel, max_speed, mut facing, mut thrust, mut stamina, carrying)) =
+    let Ok((input, mut tf, mut vel, max_speed, mut facing, mut thrust, mut stamina)) =
         q.get_single_mut()
     else {
         return;
@@ -1131,23 +1133,29 @@ fn client_predict_local(
     const ACCEL: f32 = 2000.0;
     const DRAG: f32 = 3.0;
     const SPRINT_MUL: f32 = 1.8;
-    const SPRINT_MUL_CARRY: f32 = 1.4;
     const SPRINT_DRAIN: f32 = 0.7;
 
     let wants_sprint = *mode == crate::projectile::GameMode::Classic
         && input.sprint
         && stamina.current > 0.05;
     thrust.0 = wants_sprint;
-    let sprint_mul = if carrying.is_some() { SPRINT_MUL_CARRY } else { SPRINT_MUL };
     let current_max = if wants_sprint {
         stamina.current = (stamina.current - dt * SPRINT_DRAIN).max(0.0);
-        max_speed.0 * sprint_mul
+        max_speed.0 * SPRINT_MUL
     } else {
         max_speed.0
     };
 
-    if input.move_dir.length_squared() > 0.01 {
-        vel.0 += input.move_dir * ACCEL * dt;
+    // Mirror apply_input_to_player: while boosting, normalize partial
+    // joystick deflection so a touch player can reach the boost cap
+    // without dragging the thumb to the joystick base edge.
+    let thrust_dir = if wants_sprint && input.move_dir.length_squared() > 0.01 {
+        input.move_dir.normalize()
+    } else {
+        input.move_dir
+    };
+    if thrust_dir.length_squared() > 0.01 {
+        vel.0 += thrust_dir * ACCEL * dt;
         // Face the move direction so the ship sprite points where it's going.
         facing.0 = input.move_dir.y.atan2(input.move_dir.x);
         tf.rotation = Quat::from_rotation_z(facing.0);

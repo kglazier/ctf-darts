@@ -9,6 +9,7 @@ pub mod input;
 pub mod lobby;
 pub mod movement;
 pub mod net;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod net_smoke_test;
 pub mod physics;
 pub mod player;
@@ -32,15 +33,35 @@ pub enum GameSet {
 
 #[bevy_main]
 pub fn main() {
+    #[cfg(target_arch = "wasm32")]
+    console_error_panic_hook::set_once();
+
+    // Web build draws into the <canvas id="bevy"> element in web/index.html
+    // and tracks the parent element's size so it fills the viewport. Native
+    // build keeps the default OS-window behavior.
+    #[cfg(target_arch = "wasm32")]
+    let primary_window = Window {
+        title: "Space Boosters".into(),
+        canvas: Some("#bevy".into()),
+        fit_canvas_to_parent: true,
+        // Leave default-event handling alone so the browser keeps F12 /
+        // Ctrl+Shift+I / right-click for devtools. We don't have keyboard
+        // shortcuts that conflict with the browser's defaults.
+        prevent_default_event_handling: false,
+        ..default()
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let primary_window = Window {
+        title: "Space Boosters".into(),
+        resizable: true,
+        ..default()
+    };
+
     App::new()
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Space Boosters".into(),
-                        resizable: true,
-                        ..default()
-                    }),
+                    primary_window: Some(primary_window),
                     ..default()
                 }),
         )

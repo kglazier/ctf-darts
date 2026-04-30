@@ -11,6 +11,8 @@ use crate::GameSet;
 
 #[derive(Component)]
 pub struct ScoreText;
+#[derive(Component)]
+pub struct TimerText;
 
 #[derive(Component)]
 pub struct StaminaFill;
@@ -92,6 +94,7 @@ impl Plugin for HudPlugin {
                 Update,
                 (
                     update_score,
+                    update_timer,
                     update_stamina,
                     tick_match,
                     handle_chip_tap,
@@ -128,13 +131,35 @@ pub fn setup_hud(mut commands: Commands) {
             crate::game::PlayingEntity,
         ))
         .with_children(|p| {
-            p.spawn((
-                TextBundle::from_section(
-                    "0 - 0",
-                    TextStyle { font_size: 42.0, color: Color::WHITE, ..default() },
-                ),
-                ScoreText,
-            ));
+            p.spawn(NodeBundle {
+                style: Style {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(2.0),
+                    ..default()
+                },
+                ..default()
+            })
+            .with_children(|col| {
+                col.spawn((
+                    TextBundle::from_section(
+                        "0 - 0",
+                        TextStyle { font_size: 42.0, color: Color::WHITE, ..default() },
+                    ),
+                    ScoreText,
+                ));
+                col.spawn((
+                    TextBundle::from_section(
+                        "4:00",
+                        TextStyle {
+                            font_size: 18.0,
+                            color: Color::srgba(1.0, 1.0, 1.0, 0.65),
+                            ..default()
+                        },
+                    ),
+                    TimerText,
+                ));
+            });
         });
 
     // Game mode toggle — top-left, tappable.
@@ -603,6 +628,27 @@ fn update_score(
 ) {
     for mut text in &mut q {
         text.sections[0].value = format!("{} - {}", score.red, score.blue);
+    }
+}
+
+fn update_timer(
+    state: Res<MatchState>,
+    mut q: Query<&mut Text, With<TimerText>>,
+) {
+    let remaining = state.timer.remaining_secs().max(0.0);
+    let mins = (remaining / 60.0) as u32;
+    let secs = (remaining % 60.0) as u32;
+    let label = format!("{}:{:02}", mins, secs);
+    let color = if remaining <= 10.0 {
+        Color::srgb(1.0, 0.4, 0.4)
+    } else if remaining <= 30.0 {
+        Color::srgba(1.0, 0.8, 0.4, 0.85)
+    } else {
+        Color::srgba(1.0, 1.0, 1.0, 0.65)
+    };
+    for mut text in &mut q {
+        text.sections[0].value = label.clone();
+        text.sections[0].style.color = color;
     }
 }
 
