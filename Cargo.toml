@@ -66,6 +66,9 @@ bevy = { version = "0.14", default-features = false, features = [
 ] }
 console_error_panic_hook = "0.1"
 wasm-bindgen = "0.2"
+# localStorage for progress persistence on web. Bevy already pulls web-sys;
+# this entry just turns on the Storage + Window features we need.
+web-sys = { version = "0.3", features = ["Window", "Storage"] }
 # Force getrandom's wasm_js feature so the rng compiles on wasm32-unknown-unknown.
 # Must match the rustflag in .cargo/config.toml.
 getrandom = { version = "0.3", features = ["wasm_js"] }

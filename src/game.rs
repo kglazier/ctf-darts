@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
 use crate::bot::BotDifficulty;
@@ -156,7 +157,7 @@ pub struct LevelDef {
     pub walls: &'static [WallSpec],
 }
 
-pub const LEVELS: [LevelDef; 5] = [
+pub const LEVELS: [LevelDef; 9] = [
     LevelDef {
         name: "Open Field",
         walls: &[],
@@ -192,6 +193,45 @@ pub const LEVELS: [LevelDef; 5] = [
             WallSpec { x: -160.0, y: 180.0, half_w: 150.0, half_h: 10.0 },
             WallSpec { x: 160.0, y: -180.0, half_w: 150.0, half_h: 10.0 },
             WallSpec { x: 0.0, y: 0.0, half_w: 10.0, half_h: 110.0 },
+        ],
+    },
+    LevelDef {
+        name: "Three Lanes",
+        walls: &[
+            // Two long horizontals split the arena into three corridors.
+            // No center vertical, so cross-lane jukes are still possible
+            // around the wall ends.
+            WallSpec { x: 0.0, y: 130.0, half_w: 320.0, half_h: 10.0 },
+            WallSpec { x: 0.0, y: -130.0, half_w: 320.0, half_h: 10.0 },
+        ],
+    },
+    LevelDef {
+        name: "Plus",
+        walls: &[
+            // Center plus — forces commits to a side. Arms are short enough
+            // that bots can route around; longer arms deadlocked the AI.
+            WallSpec { x: 0.0, y: 0.0, half_w: 110.0, half_h: 10.0 },
+            WallSpec { x: 0.0, y: 0.0, half_w: 10.0, half_h: 110.0 },
+        ],
+    },
+    LevelDef {
+        name: "Zigzag",
+        walls: &[
+            // Staggered horizontals create a snaking path through center.
+            WallSpec { x: -200.0, y: 110.0, half_w: 130.0, half_h: 10.0 },
+            WallSpec { x: 200.0, y: 0.0, half_w: 130.0, half_h: 10.0 },
+            WallSpec { x: -200.0, y: -110.0, half_w: 130.0, half_h: 10.0 },
+        ],
+    },
+    LevelDef {
+        name: "Bottleneck",
+        walls: &[
+            // Top + bottom verticals funnel traffic through center; two
+            // small mid pillars discourage straight-line dashes.
+            WallSpec { x: 0.0, y: 230.0, half_w: 10.0, half_h: 90.0 },
+            WallSpec { x: 0.0, y: -230.0, half_w: 10.0, half_h: 90.0 },
+            WallSpec { x: -140.0, y: 0.0, half_w: 30.0, half_h: 30.0 },
+            WallSpec { x: 140.0, y: 0.0, half_w: 30.0, half_h: 30.0 },
         ],
     },
 ];
@@ -1534,10 +1574,32 @@ fn clear_restart_countdown(mut countdown: ResMut<crate::net::RestartCountdown>) 
 
 // ---------- Persistence ----------
 
+/// Where progress.json lives, by platform. The desktop fallback (cwd) is
+/// fine for local builds; Android's launch cwd isn't writable so we point
+/// at the app's internal files dir; wasm uses localStorage entirely and
+/// this path is never consulted.
+#[cfg(target_os = "android")]
+fn save_path() -> PathBuf {
+    // Hardcoded against `[package.metadata.android] package` in Cargo.toml.
+    // The dir is created by Android at install time; create_dir_all in
+    // save_progress is belt + suspenders.
+    PathBuf::from("/data/data/com.kglazier.spaceboosters/files/progress.json")
+}
+
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 fn save_path() -> PathBuf {
     PathBuf::from("progress.json")
 }
 
+#[cfg(target_arch = "wasm32")]
+const WEB_STORAGE_KEY: &str = "space_boosters/progress";
+
+#[cfg(target_arch = "wasm32")]
+fn web_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load_progress() -> Progress {
     match std::fs::read(save_path()) {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
@@ -1545,8 +1607,28 @@ pub fn load_progress() -> Progress {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn load_progress() -> Progress {
+    web_storage()
+        .and_then(|s| s.get_item(WEB_STORAGE_KEY).ok().flatten())
+        .and_then(|v| serde_json::from_str(&v).ok())
+        .unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn save_progress(progress: &Progress) {
-    if let Ok(bytes) = serde_json::to_vec_pretty(progress) {
-        let _ = std::fs::write(save_path(), bytes);
+    let Ok(bytes) = serde_json::to_vec_pretty(progress) else { return };
+    let path = save_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, bytes);
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn save_progress(progress: &Progress) {
+    let Ok(json) = serde_json::to_string(progress) else { return };
+    if let Some(s) = web_storage() {
+        let _ = s.set_item(WEB_STORAGE_KEY, &json);
     }
 }
