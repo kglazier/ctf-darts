@@ -6,9 +6,10 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/build-android.ps1 -SkipBundle
 #
 # Requirements (one-time): cargo-ndk, ANDROID_NDK_HOME / ANDROID_NDK_ROOT.
-# `-p 24` pins the link-target API to 24 so `nix`'s getifaddrs/freeifaddrs
+# `--platform 24` pins the link-target API so `nix`'s getifaddrs/freeifaddrs
 # resolve — the NDK's libc stubs only include them at API 24+. Without
-# this flag cargo-ndk targets API 21 and the link fails.
+# this flag cargo-ndk targets API 21 and the link fails. NB: must be the
+# long form; `-p` collides with cargo's --package and panics cargo-ndk.
 
 param(
     [switch]$SkipBundle
@@ -20,7 +21,7 @@ $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
 Write-Host "==> cargo ndk build (release, arm64-v8a, API 24)" -ForegroundColor Cyan
-cargo ndk -p 24 -t arm64-v8a -o android/app/src/main/jniLibs build --release
+cargo ndk --platform 24 -t arm64-v8a -o android/app/src/main/jniLibs build --release
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if ($SkipBundle) {
