@@ -274,6 +274,19 @@ pub enum LobbyEvent {
     RemoveBot {
         net_id: u32,
     },
+    /// Host changed a bot's difficulty mid-match (chip tap on the bot HUD).
+    /// Bot AI runs host-authoritatively, so this exists purely so clients
+    /// can keep their HUD chip labels in sync.
+    SetBotDifficulty {
+        net_id: u32,
+        difficulty: crate::bot::BotDifficulty,
+    },
+    /// Host changed an ally bot's mode (Auto/Offense/Defense). Same rationale
+    /// as SetBotDifficulty — clients only need it for HUD parity.
+    SetBotMode {
+        net_id: u32,
+        mode: crate::bot::AllyMode,
+    },
     /// A peer is leaving the match cleanly (vs. silent disconnect).
     Leave,
 }
@@ -308,6 +321,8 @@ pub struct LobbyInbox {
     pub restarts: Vec<(OnlineMatchConfig, Vec<PeerAssignment>, f32)>,
     pub bot_adds: Vec<(bool /* is_blue */, u32 /* net_id */, crate::bot::BotDifficulty)>,
     pub bot_removes: Vec<u32>,
+    pub bot_difficulty_sets: Vec<(u32 /* net_id */, crate::bot::BotDifficulty)>,
+    pub bot_mode_sets: Vec<(u32 /* net_id */, crate::bot::AllyMode)>,
 }
 
 /// Host-side queue for `ClientInput` packets routed from `poll_socket`.
@@ -749,6 +764,12 @@ fn poll_socket(
             }
             NetMessage::Lobby(LobbyEvent::RemoveBot { net_id }) => {
                 lobby_inbox.bot_removes.push(net_id);
+            }
+            NetMessage::Lobby(LobbyEvent::SetBotDifficulty { net_id, difficulty }) => {
+                lobby_inbox.bot_difficulty_sets.push((net_id, difficulty));
+            }
+            NetMessage::Lobby(LobbyEvent::SetBotMode { net_id, mode }) => {
+                lobby_inbox.bot_mode_sets.push((net_id, mode));
             }
             NetMessage::Lobby(LobbyEvent::Leave) => {
                 // Treat as an early disconnect signal — actual peer-left
@@ -1491,6 +1512,8 @@ fn client_apply_bot_changes(
     mut inbox: ResMut<LobbyInbox>,
     existing: Query<(&Ship, &NetId, Option<&crate::bot::BotNumber>)>,
     bots: Query<(Entity, &Ship, &NetId), With<crate::bot::BotDifficulty>>,
+    mut diffs: Query<(&NetId, &mut crate::bot::BotDifficulty)>,
+    mut modes: Query<(&NetId, &mut crate::bot::AllyMode)>,
     labels: Query<(Entity, &crate::bot::LabelFor), With<crate::bot::BotNumberLabel>>,
 ) {
     let adds = std::mem::take(&mut inbox.bot_adds);
@@ -1520,6 +1543,18 @@ fn client_apply_bot_changes(
                     commands.entity(label_e).despawn();
                 }
             }
+        }
+    }
+    let diff_sets = std::mem::take(&mut inbox.bot_difficulty_sets);
+    for (net_id, difficulty) in diff_sets {
+        if let Some((_, mut d)) = diffs.iter_mut().find(|(n, _)| n.0 == net_id) {
+            *d = difficulty;
+        }
+    }
+    let mode_sets = std::mem::take(&mut inbox.bot_mode_sets);
+    for (net_id, mode) in mode_sets {
+        if let Some((_, mut m)) = modes.iter_mut().find(|(n, _)| n.0 == net_id) {
+            *m = mode;
         }
     }
 }

@@ -72,7 +72,7 @@ impl BotDifficulty {
 }
 
 /// Per-ally mode. Tap the ally ship to cycle.
-#[derive(Component, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum AllyMode {
     #[default]
     Auto,

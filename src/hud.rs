@@ -682,20 +682,53 @@ fn handle_chip_tap(
     q: Query<(&Interaction, &BotHudChip), Changed<Interaction>>,
     mut diffs: Query<&mut BotDifficulty>,
     mut modes: Query<&mut AllyMode>,
+    net_ids: Query<&crate::net::NetId>,
+    net_mode: Res<crate::net::NetworkMode>,
+    socket: Option<ResMut<crate::net::NetSocket>>,
+    peers: Res<crate::net::ConnectedPeers>,
 ) {
+    // Bot AI runs host-authoritatively. Clients shouldn't be able to tap —
+    // they'd only flip their own component without affecting the host. The
+    // chips are also visually disabled on clients (see chip_visual_state).
+    if *net_mode == crate::net::NetworkMode::OnlineClient {
+        return;
+    }
+    let mut socket = socket;
     for (interaction, chip) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
+        let net_id = net_ids.get(chip.bot).ok().map(|n| n.0);
         match chip.kind {
             ChipKind::Mode => {
                 if let Ok(mut m) = modes.get_mut(chip.bot) {
                     *m = m.next();
+                    if let (Some(s), Some(net_id)) = (socket.as_deref_mut(), net_id) {
+                        crate::net::broadcast(
+                            s,
+                            &peers,
+                            &crate::net::NetMessage::Lobby(
+                                crate::net::LobbyEvent::SetBotMode { net_id, mode: *m },
+                            ),
+                        );
+                    }
                 }
             }
             ChipKind::Difficulty => {
                 if let Ok(mut d) = diffs.get_mut(chip.bot) {
                     *d = d.next();
+                    if let (Some(s), Some(net_id)) = (socket.as_deref_mut(), net_id) {
+                        crate::net::broadcast(
+                            s,
+                            &peers,
+                            &crate::net::NetMessage::Lobby(
+                                crate::net::LobbyEvent::SetBotDifficulty {
+                                    net_id,
+                                    difficulty: *d,
+                                },
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -729,14 +762,43 @@ fn update_chip_text(
 }
 
 fn chip_hover_feedback(
-    mut q: Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<BotHudChip>)>,
+    mut q: Query<(&Interaction, &mut BackgroundColor), With<BotHudChip>>,
+    mut text_q: Query<(&Parent, &mut Text), With<ChipText>>,
+    chips: Query<&BotHudChip>,
+    net_mode: Res<crate::net::NetworkMode>,
 ) {
+    let disabled = *net_mode == crate::net::NetworkMode::OnlineClient;
+    if disabled {
+        // Clients can't change bot config — render every chip in a flat
+        // disabled style so taps clearly don't do anything.
+        let bg = Color::srgba(0.12, 0.12, 0.18, 0.6);
+        for (_, mut color) in &mut q {
+            color.0 = bg;
+        }
+        for (parent, mut text) in &mut text_q {
+            if chips.get(parent.get()).is_ok() {
+                for section in &mut text.sections {
+                    section.style.color = Color::srgba(1.0, 1.0, 1.0, 0.4);
+                }
+            }
+        }
+        return;
+    }
     for (i, mut bg) in &mut q {
         bg.0 = match *i {
             Interaction::Pressed => Color::srgba(0.4, 0.4, 0.7, 0.95),
             Interaction::Hovered => Color::srgba(0.3, 0.3, 0.55, 0.9),
             Interaction::None => Color::srgba(0.2, 0.2, 0.4, 0.85),
         };
+    }
+    for (parent, mut text) in &mut text_q {
+        if chips.get(parent.get()).is_ok() {
+            for section in &mut text.sections {
+                if section.style.color != Color::WHITE {
+                    section.style.color = Color::WHITE;
+                }
+            }
+        }
     }
 }
 
